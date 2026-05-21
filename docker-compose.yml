@@ -1,11 +1,16 @@
 name: oneuptime
 
+networks:
+  oneuptime:
+
 volumes:
   postgres:
   clickhouse:
 
-networks:
-  oneuptime:
+x-healthcheck: &healthcheck
+  interval: 10s
+  timeout: 5s
+  retries: 5
 
 x-depends-on: &depends-on
   postgres:
@@ -18,20 +23,59 @@ x-depends-on: &depends-on
 x-common-env: &common-env
   HOST: ${HOST}
   HTTP_PROTOCOL: ${HTTP_PROTOCOL}
+  NODE_ENV: ${ENVIRONMENT}
+
   APP_PORT: ${APP_PORT}
   HOME_PORT: ${HOME_PORT}
   SERVER_APP_HOSTNAME: ${SERVER_APP_HOSTNAME}
   SERVER_HOME_HOSTNAME: ${SERVER_HOME_HOSTNAME}
+
   DISABLE_TELEMETRY: ${DISABLE_TELEMETRY}
+  BILLING_ENABLED: ${BILLING_ENABLED}
+  IS_ENTERPRISE_EDITION: ${IS_ENTERPRISE_EDITION}
+  CAPTCHA_ENABLED: ${CAPTCHA_ENABLED}
+
+x-db-env: &db-env
+  DATABASE_HOST: ${DATABASE_HOST}
+  DATABASE_PORT: ${DATABASE_PORT}
+  DATABASE_NAME: ${DATABASE_NAME}
+  DATABASE_USERNAME: ${DATABASE_USERNAME}
+  DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+
+  REDIS_HOST: ${REDIS_HOST}
+  REDIS_PORT: ${REDIS_PORT}
+  REDIS_USERNAME: ${REDIS_USERNAME}
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  CLICKHOUSE_HOST: ${CLICKHOUSE_HOST}
+  CLICKHOUSE_PORT: ${CLICKHOUSE_PORT}
+  CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE}
+  CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+
+x-security-env: &security-env
+  ONEUPTIME_SECRET: ${ONEUPTIME_SECRET}
+  ENCRYPTION_SECRET: ${ENCRYPTION_SECRET}
+  REGISTER_PROBE_KEY: ${REGISTER_PROBE_KEY}
 
 services:
   fastapi:
     build: .
     restart: unless-stopped
+    depends_on: *depends-on
     networks:
       - oneuptime
     ports:
-      - "${FASTAPI_PORT}:${FASTAPI_PORT}"
+      - "${FASTAPI_PORT}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      <<: *healthcheck
 
   app:
     image: oneuptime/app:${APP_TAG}
@@ -40,41 +84,27 @@ services:
     networks:
       - oneuptime
     environment:
-      <<: *common-env
-      NODE_ENV: ${ENVIRONMENT}
+      <<:
+        - *common-env
+        - *db-env
+        - *security-env
       PORT: ${APP_PORT}
-      DATABASE_HOST: ${DATABASE_HOST}
-      DATABASE_PORT: ${DATABASE_PORT}
-      DATABASE_NAME: ${DATABASE_NAME}
-      DATABASE_USERNAME: ${DATABASE_USERNAME}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST}
-      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT}
-      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
-      REDIS_USERNAME: ${REDIS_USERNAME}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
-      ONEUPTIME_SECRET: ${ONEUPTIME_SECRET}
-      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET}
-      REGISTER_PROBE_KEY: ${REGISTER_PROBE_KEY}
-      BILLING_ENABLED: ${BILLING_ENABLED}
-      IS_ENTERPRISE_EDITION: ${IS_ENTERPRISE_EDITION}
-      CAPTCHA_ENABLED: ${CAPTCHA_ENABLED}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:${APP_PORT}/ || exit 1"]
+      <<: *healthcheck
 
   probe-1:
     image: oneuptime/probe:${APP_TAG}
     restart: unless-stopped
-    network_mode: host
+    networks:
+      - oneuptime
     environment:
+      REGISTER_PROBE_KEY: ${REGISTER_PROBE_KEY}
+      DISABLE_TELEMETRY: ${DISABLE_TELEMETRY}
       ONEUPTIME_URL: ${GLOBAL_PROBE_1_ONEUPTIME_URL}
       PROBE_NAME: ${GLOBAL_PROBE_1_NAME}
       PROBE_KEY: ${GLOBAL_PROBE_1_KEY}
-      REGISTER_PROBE_KEY: ${REGISTER_PROBE_KEY}
       PORT: ${GLOBAL_PROBE_1_PORT}
-      DISABLE_TELEMETRY: ${DISABLE_TELEMETRY}
 
   ingress:
     image: oneuptime/nginx:${APP_TAG}
@@ -85,10 +115,15 @@ services:
     ports:
       - "${ONEUPTIME_HTTP_PORT}:7849"
     environment:
-      <<: *common-env
+      <<:
+        - *common-env
+        - *db-env
       ONEUPTIME_HTTP_PORT: ${ONEUPTIME_HTTP_PORT}
       NGINX_LISTEN_ADDRESS: ${NGINX_LISTEN_ADDRESS}
       NGINX_LISTEN_OPTIONS: ${NGINX_LISTEN_OPTIONS}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:7849/ || exit 1"]
+      <<: *healthcheck
 
   postgres:
     image: postgres:18-alpine
@@ -102,10 +137,8 @@ services:
       POSTGRES_USER: ${DATABASE_USERNAME}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME}"]
+      <<: *healthcheck
 
   clickhouse:
     image: clickhouse/clickhouse-server:26.4
@@ -121,9 +154,7 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: ${CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT}
     healthcheck:
       test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1'"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      <<: *healthcheck
 
   redis:
     image: redis:8.2-alpine
@@ -133,6 +164,4 @@ services:
     command: redis-server --requirepass "${REDIS_PASSWORD}" --save "" --appendonly no
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      <<: *healthcheck
