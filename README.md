@@ -4,11 +4,11 @@ FastAPI app monitored by Uptime Kuma.
 
 | Service           | URL                        |
 |-------------------|----------------------------|
-| FastAPI           | <http://localhost:8000>      |
-| Uptime Kuma       | <http://localhost:3001>      |
-| Prometheus        | <http://localhost:9090>      |
-| Grafana           | <http://localhost:3000>      |
-| Blackbox Exporter | <http://localhost:9115>      |
+| FastAPI           | <http://localhost:8000>    |
+| Uptime Kuma       | <http://localhost:3001>    |
+| Prometheus        | <http://localhost:9090>    |
+| Grafana           | <http://localhost:3000>    |
+| Blackbox Exporter | <http://localhost:9115>    |
 
 ## Setup
 
